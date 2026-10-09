@@ -313,9 +313,14 @@ function showView(name) {
 async function searchShows(query) {
   const res = await spotifyFetch(
     "https://api.spotify.com/v1/search?" +
-      new URLSearchParams({ q: query, type: "show", limit: "6", market: "from_token" })
+      new URLSearchParams({ q: query, type: "show", limit: "6" })
   );
-  if (!res.ok) throw new Error("search failed");
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const err = new Error(`Search failed (${res.status}): ${text.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
   const data = await res.json();
   return data.shows.items;
 }
@@ -412,8 +417,13 @@ els.searchBtn.addEventListener("click", async () => {
   try {
     const shows = await searchShows(q);
     renderSearchResults(shows);
-  } catch {
-    els.searchResults.innerHTML = `<p style="color:var(--danger)">Search failed, try again.</p>`;
+  } catch (err) {
+    if (err && err.kind === "auth") {
+      els.searchResults.innerHTML = `<p style="color:var(--danger)">Session expired, reconnecting...</p>`;
+      disconnect();
+    } else {
+      els.searchResults.innerHTML = `<p style="color:var(--danger)">${(err && err.message) || "Search failed, try again."}</p>`;
+    }
   } finally {
     els.searchBtn.textContent = "Search";
   }
