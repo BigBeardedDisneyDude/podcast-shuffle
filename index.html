@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#121212">
+<title>Podcast Shuffle</title>
+<style>
+  :root {
+    --green: #1db954;
+    --bg: #121212;
+    --card: #1e1e1e;
+    --text: #ffffff;
+    --muted: #b3b3b3;
+    --danger: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .wrap { width: 100%; max-width: 420px; }
+  h1 {
+    font-size: 22px;
+    text-align: center;
+    margin: 0 0 24px;
+    letter-spacing: 0.5px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  button {
+    width: 100%;
+    border: none;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 16px;
+    padding: 16px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-primary { background: var(--green); color: #000; }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-secondary { background: transparent; color: var(--muted); border: 1px solid #333; margin-top: 10px; }
+  .btn-shuffle {
+    background: var(--green);
+    color: #000;
+    font-size: 20px;
+    padding: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .btn-shuffle:disabled { opacity: 0.6; }
+  .podcast-name { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 16px; word-break: break-word; }
+  .podcast-name b { color: var(--text); display: block; font-size: 17px; margin-top: 2px; }
+  .status { text-align: center; font-size: 14px; margin-top: 16px; min-height: 20px; color: var(--muted); }
+  .status.error { color: var(--danger); }
+  .status.success { color: var(--green); }
+  input[type=text] {
+    width: 100%;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid #333;
+    background: #0a0a0a;
+    color: var(--text);
+    font-size: 16px;
+    margin-bottom: 10px;
+  }
+  .result {
+    padding: 12px;
+    border-radius: 10px;
+    background: #2a2a2a;
+    margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .result:active { background: #333; }
+  .result b { display: block; }
+  .result span { color: var(--muted); font-size: 13px; }
+  .hidden { display: none !important; }
+  .link-btn {
+    display: block;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 14px;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .spin {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid rgba(0,0,0,0.3);
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎧 Podcast Shuffle</h1>
+
+  <div id="connect" class="card hidden">
+    <p style="color:var(--muted); text-align:center; margin-top:0;">Connect your Spotify account to get started.</p>
+    <button class="btn-primary" id="connectBtn">Connect to Spotify</button>
+  </div>
+
+  <div id="search" class="card hidden">
+    <p style="color:var(--muted); margin-top:0;">Which podcast do you want to shuffle?</p>
+    <input type="text" id="searchInput" placeholder="Search for a show...">
+    <button class="btn-primary" id="searchBtn">Search</button>
+    <div id="searchResults" style="margin-top:12px;"></div>
+  </div>
+
+  <div id="main" class="card hidden">
+    <div class="podcast-name">Now shuffling<b id="showName"></b></div>
+    <button class="btn-shuffle" id="shuffleBtn">🔀 Shuffle Episode</button>
+    <div class="status" id="status"></div>
+    <span class="link-btn" id="changeShow">Change podcast</span>
+  </div>
+
+  <span class="link-btn hidden" id="disconnect">Disconnect Spotify</span>
+</div>
+
+<script>
+const CLIENT_ID = "668962b006854e8bad4315b65d7130a3";
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+const SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing";
+
+const els = {
+  connect: document.getElementById("connect"),
+  connectBtn: document.getElementById("connectBtn"),
+  search: document.getElementById("search"),
+  searchInput: document.getElementById("searchInput"),
+  searchBtn: document.getElementById("searchBtn"),
+  searchResults: document.getElementById("searchResults"),
+  main: document.getElementById("main"),
+  showName: document.getElementById("showName"),
+  shuffleBtn: document.getElementById("shuffleBtn"),
+  status: document.getElementById("status"),
+  changeShow: document.getElementById("changeShow"),
+  disconnect: document.getElementById("disconnect"),
+};
+
+function base64url(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function randomVerifier() {
+  const arr = new Uint8Array(64);
+  crypto.getRandomValues(arr);
+  return base64url(arr);
+}
+
+async function challengeFor(verifier) {
+  const data = new TextEncoder().encode(verifier);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return base64url(digest);
+}
+
+function saveTokens(data) {
+  const expiresAt = Date.now() + (data.expires_in * 1000) - 60000;
+  localStorage.setItem("ps_access_token", data.access_token);
+  localStorage.setItem("ps_expires_at", String(expiresAt));
+  if (data.refresh_token) localStorage.setItem("ps_refresh_token", data.refresh_token);
+}
+
+function getStoredAccessToken() {
+  return localStorage.getItem("ps_access_token");
+}
+
+function tokenExpired() {
+  const exp = localStorage.getItem("ps_expires_at");
+  return !exp || Date.now() > Number(exp);
+}
+
+async function refreshToken() {
+  const refresh_token = localStorage.getItem("ps_refresh_token");
+  if (!refresh_token) return false;
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token,
+      client_id: CLIENT_ID,
+    }),
+  });
+  if (!res.ok) return false;
+  const data = await res.json();
+  saveTokens(data);
+  return true;
+}
+
+async function ensureToken() {
+  if (!getStoredAccessToken()) return false;
+  if (tokenExpired()) {
+    const ok = await refreshToken();
+    if (!ok) return false;
+  }
+  return true;
+}
+
+async function spotifyFetch(url, options = {}) {
+  if (!(await ensureToken())) throw { kind: "auth" };
+  const doFetch = () => fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: "Bearer " + getStoredAccessToken(),
+    },
+  });
+  let res = await doFetch();
+  if (res.status === 401) {
+    const ok = await refreshToken();
+    if (!ok) throw { kind: "auth" };
+    res = await doFetch();
+  }
+  return res;
+}
+
+async function startAuth() {
+  const verifier = randomVerifier();
+  const challenge = await challengeFor(verifier);
+  const state = randomVerifier().slice(0, 16);
+  sessionStorage.setItem("ps_verifier", verifier);
+  sessionStorage.setItem("ps_state", state);
+
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    response_type: "code",
+    redirect_uri: REDIRECT_URI,
+    code_challenge_method: "S256",
+    code_challenge: challenge,
+    scope: SCOPES,
+    state,
+  });
+  window.location.href = "https://accounts.spotify.com/authorize?" + params.toString();
+}
+
+async function handleRedirectIfNeeded() {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const error = url.searchParams.get("error");
+
+  if (error) {
+    history.replaceState({}, "", REDIRECT_URI);
+    setStatus("Spotify login failed: " + error, "error");
+    return;
+  }
+  if (!code) return;
+
+  const expectedState = sessionStorage.getItem("ps_state");
+  const verifier = sessionStorage.getItem("ps_verifier");
+  history.replaceState({}, "", REDIRECT_URI);
+
+  if (!verifier || state !== expectedState) {
+    setStatus("Login session expired, please try connecting again.", "error");
+    return;
+  }
+
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: CLIENT_ID,
+      code_verifier: verifier,
+    }),
+  });
+
+  if (!res.ok) {
+    setStatus("Could not complete Spotify login.", "error");
+    return;
+  }
+  const data = await res.json();
+  saveTokens(data);
+}
+
+function setStatus(msg, type) {
+  els.status.textContent = msg;
+  els.status.className = "status" + (type ? " " + type : "");
+}
+
+function showView(name) {
+  els.connect.classList.add("hidden");
+  els.search.classList.add("hidden");
+  els.main.classList.add("hidden");
+  els.disconnect.classList.add("hidden");
+  if (name) els[name].classList.remove("hidden");
+  if (name === "search" || name === "main") els.disconnect.classList.remove("hidden");
+}
+
+async function searchShows(query) {
+  const res = await spotifyFetch(
+    "https://api.spotify.com/v1/search?" +
+      new URLSearchParams({ q: query, type: "show", limit: "6", market: "from_token" })
+  );
+  if (!res.ok) throw new Error("search failed");
+  const data = await res.json();
+  return data.shows.items;
+}
+
+function renderSearchResults(shows) {
+  els.searchResults.innerHTML = "";
+  shows.forEach((show) => {
+    const div = document.createElement("div");
+    div.className = "result";
+    div.innerHTML = `<b></b><span></span>`;
+    div.querySelector("b").textContent = show.name;
+    div.querySelector("span").textContent = show.publisher;
+    div.addEventListener("click", () => selectShow(show));
+    els.searchResults.appendChild(div);
+  });
+}
+
+function selectShow(show) {
+  localStorage.setItem("ps_show_id", show.id);
+  localStorage.setItem("ps_show_name", show.name);
+  renderMain();
+}
+
+function renderMain() {
+  const name = localStorage.getItem("ps_show_name");
+  els.showName.textContent = name;
+  setStatus("", "");
+  showView("main");
+}
+
+async function shuffleEpisode() {
+  const showId = localStorage.getItem("ps_show_id");
+  els.shuffleBtn.disabled = true;
+  setStatus("Finding a random episode...", "");
+  try {
+    const countRes = await spotifyFetch(
+      `https://api.spotify.com/v1/shows/${showId}/episodes?market=from_token&limit=1&offset=0`
+    );
+    if (!countRes.ok) throw { kind: "api", res: countRes };
+    const countData = await countRes.json();
+    const total = countData.total;
+    if (!total) {
+      setStatus("This show has no episodes available in your market.", "error");
+      return;
+    }
+    const offset = Math.floor(Math.random() * total);
+
+    const epRes = await spotifyFetch(
+      `https://api.spotify.com/v1/shows/${showId}/episodes?market=from_token&limit=1&offset=${offset}`
+    );
+    if (!epRes.ok) throw { kind: "api", res: epRes };
+    const epData = await epRes.json();
+    const episode = epData.items[0];
+
+    const playRes = await spotifyFetch("https://api.spotify.com/v1/me/player/play", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uris: [episode.uri] }),
+    });
+
+    if (playRes.status === 204 || playRes.status === 202) {
+      setStatus("▶ Now playing: " + episode.name, "success");
+    } else if (playRes.status === 404) {
+      setStatus("No active Spotify device found — open Spotify on your phone or car first, then try again.", "error");
+    } else if (playRes.status === 403) {
+      setStatus("Playback control needs Spotify Premium.", "error");
+    } else {
+      throw { kind: "api", res: playRes };
+    }
+  } catch (e) {
+    if (e && e.kind === "auth") {
+      setStatus("Session expired. Please reconnect to Spotify.", "error");
+      disconnect();
+    } else {
+      setStatus("Something went wrong. Please try again.", "error");
+    }
+  } finally {
+    els.shuffleBtn.disabled = false;
+  }
+}
+
+function disconnect() {
+  ["ps_access_token", "ps_expires_at", "ps_refresh_token", "ps_show_id", "ps_show_name"].forEach((k) =>
+    localStorage.removeItem(k)
+  );
+  showView("connect");
+}
+
+els.connectBtn.addEventListener("click", startAuth);
+els.searchBtn.addEventListener("click", async () => {
+  const q = els.searchInput.value.trim();
+  if (!q) return;
+  els.searchBtn.textContent = "Searching...";
+  try {
+    const shows = await searchShows(q);
+    renderSearchResults(shows);
+  } catch {
+    els.searchResults.innerHTML = `<p style="color:var(--danger)">Search failed, try again.</p>`;
+  } finally {
+    els.searchBtn.textContent = "Search";
+  }
+});
+els.searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.searchBtn.click();
+});
+els.shuffleBtn.addEventListener("click", shuffleEpisode);
+els.changeShow.addEventListener("click", () => {
+  localStorage.removeItem("ps_show_id");
+  localStorage.removeItem("ps_show_name");
+  showView("search");
+});
+els.disconnect.addEventListener("click", disconnect);
+
+(async function init() {
+  await handleRedirectIfNeeded();
+  if (!getStoredAccessToken()) {
+    showView("connect");
+    return;
+  }
+  if (localStorage.getItem("ps_show_id")) {
+    renderMain();
+  } else {
+    showView("search");
+  }
+})();
+</script>
+</body>
+</html>
