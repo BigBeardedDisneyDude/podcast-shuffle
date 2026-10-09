@@ -375,14 +375,24 @@ async function shuffleEpisode() {
     const epData = await epRes.json();
     const episode = epData.items[0];
 
-    const playRes = await spotifyFetch("https://api.spotify.com/v1/me/player/play", {
+    const devicesRes = await spotifyFetch("https://api.spotify.com/v1/me/player/devices");
+    const devicesData = devicesRes.ok ? await devicesRes.json() : { devices: [] };
+    const devices = devicesData.devices || [];
+    if (!devices.length) {
+      setStatus("No Spotify device found — open the Spotify app and tap play/pause on anything once to wake it up, then try again.", "error");
+      return;
+    }
+    const device = devices.find((d) => d.is_active) || devices[0];
+
+    const playUrl = "https://api.spotify.com/v1/me/player/play?" + new URLSearchParams({ device_id: device.id });
+    const playRes = await spotifyFetch(playUrl, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ uris: [episode.uri] }),
     });
 
     if (playRes.status === 204 || playRes.status === 202) {
-      setStatus("▶ Now playing: " + episode.name, "success");
+      setStatus(`▶ Now playing on ${device.name}: ` + episode.name, "success");
     } else if (playRes.status === 404) {
       setStatus("No active Spotify device found — open Spotify on your phone or car first, then try again.", "error");
     } else if (playRes.status === 403) {
